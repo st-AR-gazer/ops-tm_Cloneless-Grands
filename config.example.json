@@ -1,0 +1,68 @@
+{
+  "env": {
+    "load_dotenv": true,
+    "dotenv_path": ".env",
+    "override_existing_env": false
+  },
+  "auth": {
+    "email_env": "UBI_EMAIL",
+    "password_env": "UBI_PASSWORD",
+    "user_agent": "ClonelessGrandsBot/1.0 (contact:you@example.com)"
+  },
+  "weekly_grands": {
+    "length": 1,
+    "offset": 0
+  },
+  "club": {
+    "club_id": 130653,
+    "folder_id": 0,
+    "upsert_by_name": true,
+    "activate": true,
+    "public": true,
+    "featured": false,
+    "upload_activity_media_from_map_thumbnail": true,
+    "media_theme": "",
+    "activity_position": null
+  },
+  "campaign": {
+    "name_template": "w{week:02d} {source_map_name_clean}",
+    "truncate_to_20": true
+  },
+  "map": {
+    "uid_prefix": "CLONELESS_",
+    "name_template": "w{week:02d} {source_map_name_clean}",
+    "strip_exe": "tools/strip-validation/stripValidationReplay.exe",
+    "strip_note": "Cloneless Grands automated processing",
+    "allow_reuse_existing_uid": true,
+    "uid_rewriter": {
+      "mode": "external_command",
+      "command_template": "powershell -NoProfile -ExecutionPolicy Bypass -File \"tools/gbx-json-editor/rewrite_uid_with_gbxjsoneditor.ps1\" -InputPath \"{input}\" -OutputPath \"{output}\" -NewUid \"{new_uid}\""
+    }
+  },
+  "club_bucket": {
+    "enabled": false,
+    "bucket_id": 0
+  },
+  "club_background": {
+    "enabled": true,
+    "format": "background",
+    "prefer_weekly_campaign_media": true
+  },
+  "ordering": {
+    "enabled": true,
+    "pinned_activity_name": "Information",
+    "pinned_activity_type": "news",
+    "pinned_position": 0,
+    "processed_campaign_position": 1
+  },
+  "paths": {
+    "work_dir": "work",
+    "state_file": "work/state.json"
+  },
+  "state": {
+    "skip_processed": true
+  },
+  "http": {
+    "timeout_sec": 45
+  }
+}

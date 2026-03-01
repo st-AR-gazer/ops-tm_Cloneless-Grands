@@ -1,0 +1,11 @@
+{
+  "type": "Map",
+  "outputSuffix": "uidpatched",
+  "operations": [
+    {
+      "op": "set",
+      "path": "MapUid",
+      "value": "__NEW_UID__"
+    }
+  ]
+}
