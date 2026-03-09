@@ -14,6 +14,7 @@ import re
 import subprocess
 import sys
 from typing import Any
+import zipfile
 
 import requests
 
@@ -56,6 +57,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "map": {
         "uid_prefix": "CLONELESS_",
         "name_template": "w{week:02d} {source_map_name_clean}",
+        "transform_mode": "pure_python",
         "strip_exe": "tools/strip-validation/stripValidationReplay.exe",
         "strip_note": "Cloneless Grands automated processing",
         "allow_reuse_existing_uid": True,
@@ -99,6 +101,9 @@ class ConfigError(RuntimeError):
 
 class ApiError(RuntimeError):
     pass
+
+
+TM2020_STRIPPED_RACE_VALIDATE_GHOST = bytes.fromhex("0000000004000000ffffffff")
 
 
 def log(msg: str) -> None:
@@ -224,13 +229,18 @@ def assert_ascii(text: str, label: str) -> None:
 
 
 def validate_config(cfg: dict[str, Any]) -> None:
-    strip_exe = cfg["map"]["strip_exe"]
-    if not strip_exe:
-        raise ConfigError("map.strip_exe is required.")
+    transform_mode = str(cfg["map"].get("transform_mode", "pure_python")).strip()
+    if transform_mode not in {"pure_python", "legacy"}:
+        raise ConfigError("map.transform_mode must be 'pure_python' or 'legacy'.")
 
-    strip_exe_path = Path(strip_exe)
-    if not strip_exe_path.exists():
-        raise ConfigError(f"strip executable not found: {strip_exe_path}")
+    if transform_mode == "legacy":
+        strip_exe = cfg["map"]["strip_exe"]
+        if not strip_exe:
+            raise ConfigError("map.strip_exe is required when transform_mode='legacy'.")
+
+        strip_exe_path = Path(strip_exe)
+        if not strip_exe_path.exists():
+            raise ConfigError(f"strip executable not found: {strip_exe_path}")
 
     uid_prefix = cfg["map"]["uid_prefix"]
     if not uid_prefix:
@@ -281,8 +291,117 @@ def run_command(args: list[str], *, shell: bool = False) -> None:
     log(f"Running command: {' '.join(args) if not shell else args[0]}")
     try:
         subprocess.run(args if not shell else args[0], check=True, shell=shell)
+    except OSError as exc:
+        raise RuntimeError(f"Command failed to start: {exc}") from exc
     except subprocess.CalledProcessError as exc:
         raise RuntimeError(f"Command failed with exit code {exc.returncode}") from exc
+
+
+def close_zip_handles(obj: Any, seen: set[int] | None = None) -> None:
+    if seen is None:
+        seen = set()
+
+    obj_id = id(obj)
+    if obj_id in seen:
+        return
+    seen.add(obj_id)
+
+    if isinstance(obj, zipfile.ZipFile):
+        try:
+            obj.close()
+        except OSError:
+            pass
+        return
+
+    if isinstance(obj, dict):
+        for value in obj.values():
+            close_zip_handles(value, seen)
+        return
+
+    if isinstance(obj, list):
+        for value in obj:
+            close_zip_handles(value, seen)
+
+
+def import_gbxpy() -> tuple[Any, Any]:
+    try:
+        from gbxpy.parser import generate_file as gbx_generate_file
+        from gbxpy.parser import parse_file as gbx_parse_file
+    except ImportError as exc:
+        raise RuntimeError(
+            "Pure-Python map transform requires the 'construct' package. Run 'pip install -r requirements.txt'."
+        ) from exc
+    return gbx_parse_file, gbx_generate_file
+
+
+def strip_validation_ghost_pure_python(data: Any) -> None:
+    challenge_chunk = data["body"].get(0x03043011)
+    if not challenge_chunk or "challengeParameters" not in challenge_chunk:
+        raise RuntimeError("Could not locate challengeParameters chunk in map body.")
+
+    challenge_parameters = challenge_chunk["challengeParameters"]
+    body = challenge_parameters.get("body")
+    if not isinstance(body, dict):
+        raise RuntimeError("challengeParameters body is missing or malformed.")
+
+    ghost_chunk = body.get(0x0305B00F)
+    if ghost_chunk and "_unknownChunkId" in ghost_chunk:
+        ghost_chunk["_unknownChunkId"] = TM2020_STRIPPED_RACE_VALIDATE_GHOST
+        return
+
+    legacy_chunk = body.get(0x0305B00D)
+    if legacy_chunk and "raceValidateGhost" in legacy_chunk:
+        legacy_chunk["raceValidateGhost"] = {"_index": -1}
+        return
+
+    raise RuntimeError("Could not locate a writable race-validation-ghost chunk.")
+
+
+def rewrite_map_info_uids(data: Any, source_uid: str, new_uid: str) -> int:
+    updated = 0
+
+    def walk(node: Any) -> None:
+        nonlocal updated
+        if isinstance(node, dict):
+            map_info = node.get("mapInfo")
+            if isinstance(map_info, dict) and map_info.get("id") == source_uid:
+                map_info["id"] = new_uid
+                updated += 1
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    walk(data)
+    return updated
+
+
+def transform_map_pure_python(
+    source_file: Path,
+    stripped_file: Path,
+    output_file: Path,
+    source_uid: str,
+    new_uid: str,
+) -> int:
+    parse_file, generate_file = import_gbxpy()
+    stripped_file.parent.mkdir(parents=True, exist_ok=True)
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+
+    data = parse_file(str(source_file), recursive=False)
+    try:
+        strip_validation_ghost_pure_python(data)
+        stripped_file.write_bytes(generate_file(data))
+
+        updated = rewrite_map_info_uids(data, source_uid, new_uid)
+        if updated < 2:
+            raise RuntimeError(
+                f"Expected to rewrite at least 2 mapInfo ids, updated={updated}."
+            )
+        output_file.write_bytes(generate_file(data))
+        return updated
+    finally:
+        close_zip_handles(data)
 
 
 def rewrite_uid_internal(
@@ -1024,27 +1143,42 @@ def process_one_campaign(
             log("Download source map")
             api.download_file(download_url, source_file)
 
-            strip_cmd = [cfg["map"]["strip_exe"], str(source_file), str(stripped_file)]
-            strip_note = cfg["map"]["strip_note"]
-            if strip_note:
-                strip_cmd.append(strip_note)
-            run_command(strip_cmd)
-
-            mode = cfg["map"]["uid_rewriter"]["mode"]
-            if mode == "internal_replace":
-                replaced = rewrite_uid_internal(
-                    stripped_file, cloneless_file, source_map_uid, new_map_uid
-                )
-                log(f"UID rewrite complete (internal), replaced={replaced}")
-            else:
-                rewrite_uid_external(
+            transform_mode = str(cfg["map"].get("transform_mode", "pure_python"))
+            if transform_mode == "pure_python":
+                updated = transform_map_pure_python(
+                    source_file,
                     stripped_file,
                     cloneless_file,
                     source_map_uid,
                     new_map_uid,
-                    cfg["map"]["uid_rewriter"]["command_template"],
                 )
-                log("UID rewrite complete (external)")
+                log(f"Map transform complete (pure python), mapInfo ids updated={updated}")
+            else:
+                strip_cmd = [
+                    cfg["map"]["strip_exe"],
+                    str(source_file),
+                    str(stripped_file),
+                ]
+                strip_note = cfg["map"]["strip_note"]
+                if strip_note:
+                    strip_cmd.append(strip_note)
+                run_command(strip_cmd)
+
+                mode = cfg["map"]["uid_rewriter"]["mode"]
+                if mode == "internal_replace":
+                    replaced = rewrite_uid_internal(
+                        stripped_file, cloneless_file, source_map_uid, new_map_uid
+                    )
+                    log(f"UID rewrite complete (internal), replaced={replaced}")
+                else:
+                    rewrite_uid_external(
+                        stripped_file,
+                        cloneless_file,
+                        source_map_uid,
+                        new_map_uid,
+                        cfg["map"]["uid_rewriter"]["command_template"],
+                    )
+                    log("UID rewrite complete (external)")
 
             log("Upload map to Nadeo Core")
             uploaded_map_payload = api.upload_map(

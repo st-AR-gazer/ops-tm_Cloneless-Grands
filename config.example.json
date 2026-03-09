@@ -31,12 +31,13 @@
   "map": {
     "uid_prefix": "CLONELESS_",
     "name_template": "w{week:02d} {source_map_name_clean}",
+    "transform_mode": "pure_python",
     "strip_exe": "tools/strip-validation/stripValidationReplay.exe",
     "strip_note": "Cloneless Grands automated processing",
     "allow_reuse_existing_uid": true,
     "uid_rewriter": {
-      "mode": "external_command",
-      "command_template": "powershell -NoProfile -ExecutionPolicy Bypass -File \"tools/gbx-json-editor/rewrite_uid_with_gbxjsoneditor.ps1\" -InputPath \"{input}\" -OutputPath \"{output}\" -NewUid \"{new_uid}\""
+      "mode": "internal_replace",
+      "command_template": ""
     }
   },
   "club_bucket": {

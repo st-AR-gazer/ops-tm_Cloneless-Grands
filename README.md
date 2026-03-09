@@ -4,7 +4,7 @@ Automates the full pipeline for your club workflow:
 
 1. Fetch Weekly Grands campaign(s).
 2. Download source map(s).
-3. Strip RaceValidationGhost (`stripValidationReplay.exe`).
+3. Strip `RaceValidateGhost` using the bundled pure-Python map transformer.
 4. Rewrite map UID to `CLONELESS_<rest>`.
 5. Upload map to Nadeo Core (`POST /maps/` multipart).
 6. Create or update club campaign with the uploaded map UID.
@@ -15,9 +15,10 @@ Automates the full pipeline for your club workflow:
 11. Optionally add the map UID to a map-upload bucket.
 
 Bundled local tools (so no external absolute paths are required):
-- `tools/strip-validation/stripValidationReplay.exe`
-- `tools/strip-validation/gbxlzo.exe`
-- `tools/gbx-json-editor/GbxJsonEditor.Cli.exe`
+- `tools/strip-validation/stripValidationReplay.exe` (legacy fallback)
+- `tools/strip-validation/gbxlzo.exe` (legacy fallback)
+- `tools/gbx-json-editor/GbxJsonEditor.Cli.exe` (legacy fallback)
+- `src/gbxpy/*` (vendored pure-Python GBX parser used by default)
 
 ## Setup
 
@@ -41,7 +42,7 @@ pip install -r requirements.txt
 Copy-Item config.example.json config.json
 ```
 
-`config.example.json` already points `map.strip_exe` to the local bundled tool path.
+`config.example.json` defaults to the bundled pure-Python transformer. The older exe-based strip/rewrite path is still available via `map.transform_mode = "legacy"`.
 
 4. Create dotenv file:
 
