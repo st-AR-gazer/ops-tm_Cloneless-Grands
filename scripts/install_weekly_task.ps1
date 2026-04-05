@@ -6,6 +6,8 @@ param(
     [string[]]$RetryTimes = @("18:20", "20:20"),
     [string]$ConfigPath = "$PSScriptRoot\..\config.json",
     [string]$PythonExe = "python",
+    [ValidateSet("S4U", "Interactive")]
+    [string]$LogonType = "S4U",
     [switch]$RunNow
 )
 
@@ -42,7 +44,8 @@ function Parse-ClockTime {
 
 $runnerAbsPath = (Resolve-Path $runnerPath).Path
 $configAbsPath = (Resolve-Path $resolvedConfigPath).Path
-$taskArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$runnerAbsPath`" -ConfigPath `"$configAbsPath`" -PythonExe `"$PythonExe`" -ScheduledMode -ReleaseDay $Day -ReleaseTime 18:00 -ValidationLength 1"
+$resolvedPythonExe = (Get-Command $PythonExe -ErrorAction Stop).Source
+$taskArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$runnerAbsPath`" -ConfigPath `"$configAbsPath`" -PythonExe `"$resolvedPythonExe`" -ScheduledMode -ReleaseDay $Day -ReleaseTime 18:00 -ValidationLength 1"
 $taskCommand = "powershell.exe $taskArgs"
 
 $dayLookup = @{
@@ -75,7 +78,7 @@ foreach ($scheduledTime in $scheduledTimes) {
 }
 
 $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $taskArgs
-$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive
+$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType $LogonType
 $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Hours 72)
 
 Write-Host "Creating/updating task '$TaskName'..."
@@ -90,6 +93,8 @@ Register-ScheduledTask `
 Write-Host "Task created."
 Write-Host "Task: $TaskName"
 Write-Host "Day:  $Day"
+Write-Host "LogonType: $LogonType"
+Write-Host "Python: $resolvedPythonExe"
 Write-Host "Times:"
 foreach ($scheduledTime in $scheduledTimes) {
     Write-Host "  - $scheduledTime"
