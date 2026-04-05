@@ -5,6 +5,9 @@
     "override_existing_env": false
   },
   "auth": {
+    "mode": "service_account",
+    "service_account_login_env": "TM_SERVICE_ACCOUNT_LOGIN",
+    "service_account_password_env": "TM_SERVICE_ACCOUNT_PASSWORD",
     "email_env": "UBI_EMAIL",
     "password_env": "UBI_PASSWORD",
     "user_agent": "ClonelessGrandsBot/1.0 (contact:@ar___ on discord)"
@@ -31,6 +34,12 @@
   "map": {
     "uid_prefix": "CLONELESS_",
     "name_template": "w{week:02d} {source_map_name_clean}",
+    "variant_name_template": "{map_name_base} {lap_count}L",
+    "author_login": "0QzczTHnSR-VBNcu46cN5g",
+    "author_nickname_template": "{source_author_nickname} (ed' ar)",
+    "lap_variants": [1, 2, 3, 5, 10, 20, 30, 60, 120, 256],
+    "transform_mode": "pure_python",
+    "strip_validation_replay": true,
     "strip_exe": "tools/strip-validation/stripValidationReplay.exe",
     "strip_note": "Cloneless Grands automated processing",
     "allow_reuse_existing_uid": true,

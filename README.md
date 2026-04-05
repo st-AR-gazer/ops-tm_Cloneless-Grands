@@ -5,14 +5,17 @@ Automates the full pipeline for your club workflow:
 1. Fetch Weekly Grands campaign(s).
 2. Download source map(s).
 3. Strip `RaceValidateGhost` using the bundled pure-Python map transformer.
-4. Rewrite map UID to `CLONELESS_<rest>`.
-5. Upload map to Nadeo Core (`POST /maps/` multipart).
-6. Create or update club campaign with the uploaded map UID.
-7. Activate/publicize the campaign activity.
-8. Upload activity media (thumbnail/render) for the campaign card.
-9. Enforce activity ordering (`Information` pinned first, processed campaign right after).
-10. Upload club background from latest weekly render image.
-11. Optionally add the map UID to a map-upload bucket.
+4. Rewrite map UID to variant-specific cloneless UIDs.
+5. Generate lap variants (default: `1, 2, 3, 5, 10, 20, 30, 60, 120, 256`).
+6. Scale Author Time from the source lap count and auto-derive Gold/Silver/Bronze using the same formula as `script-tm_Gbx-Medal-Time-Modifier`.
+7. Update the embedded map name and thumbnail so each variant visibly includes its lap count.
+8. Upload maps to Nadeo Core (`POST /maps/` multipart).
+9. Create or update the club campaign with the full uploaded playlist.
+10. Activate/publicize the campaign activity.
+11. Upload activity media (thumbnail/render) for the campaign card.
+12. Enforce activity ordering (`Information` pinned first, processed campaign right after).
+13. Upload club background from latest weekly render image.
+14. Optionally add the map UIDs to a map-upload bucket.
 
 Bundled local tools (so no external absolute paths are required):
 - `tools/strip-validation/stripValidationReplay.exe` (legacy fallback)
@@ -44,6 +47,19 @@ Copy-Item config.example.json config.json
 
 `config.example.json` defaults to the bundled pure-Python transformer. The older exe-based strip/rewrite path is still available via `map.transform_mode = "legacy"`.
 
+Default lap-variant config:
+
+- `map.lap_variants = [1, 2, 3, 5, 10, 20, 30, 60, 120, 256]`
+- `map.variant_name_template = "{map_name_base} {lap_count}L"`
+- Variant output filenames include the lap tag as `{lap_count:03d}L`
+- Variant map thumbnails get a lap-count overlay badge during generation
+
+Author Time is scaled from the source map's real lap count, and Gold/Silver/Bronze are auto-generated with the same formula used by `st-AR-gazer/script-tm_Gbx-Medal-Time-Modifier`:
+
+- Gold = `AT x 1.06`, rounded up to the next whole second
+- Silver = `AT x 1.20`, rounded up to the next whole second
+- Bronze = `AT x 1.50`, rounded up to the next whole second
+
 4. Create dotenv file:
 
 ```powershell
@@ -53,9 +69,13 @@ Copy-Item .env.example .env
 Then edit `.env`:
 
 ```env
-UBI_EMAIL=you@example.com
-UBI_PASSWORD=your_password
+TM_SERVICE_ACCOUNT_LOGIN=your_service_account_login
+TM_SERVICE_ACCOUNT_PASSWORD=your_service_account_password
 ```
+
+Create the service account at `https://www.trackmania.com/player/service-account`.
+The default auth mode now uses Trackmania service-account credentials via Nadeo's `/v2/authentication/token/basic` endpoint.
+If you ever need the older Ubisoft login flow, set `auth.mode` to `"ubisoft"` and provide `UBI_EMAIL` / `UBI_PASSWORD` instead.
 
 By default the script auto-loads `.env` (see `env` section in `config.json`).
 
@@ -78,6 +98,12 @@ Quick run wrapper:
 
 ```powershell
 .\scripts\run_cloneless_grands.ps1 -ConfigPath .\config.json
+```
+
+Compliance check wrapper:
+
+```powershell
+.\scripts\check_cloneless_grands_compliance.ps1 -ConfigPath .\config.json
 ```
 
 Install weekly scheduled task:
@@ -128,7 +154,8 @@ Example:
 ## Notes
 
 - Campaign names are capped at 20 chars by the API. The script truncates if `campaign.truncate_to_20 = true`.
-- Default naming now uses `w{week:02d} {source_map_name_clean}` for both campaign and map upload metadata.
+- Default campaign naming uses `w{week:02d} {source_map_name_clean}`.
+- Default variant map naming uses `{map_name_base} {lap_count}L`.
 - State is stored in `work/state.json` to avoid reposting the same `seasonUid`.
 - `work/raw` and `work/processed` keep downloaded and transformed map files.
 - Dotenv loading is configurable via `env.load_dotenv`, `env.dotenv_path`, and `env.override_existing_env`.
