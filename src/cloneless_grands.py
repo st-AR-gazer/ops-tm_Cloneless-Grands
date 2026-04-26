@@ -2258,7 +2258,8 @@ def process_one_campaign(
     uploaded_map_uids: list[str] = []
     playlist_map_uids: list[str] = []
     primary_uploaded_map_uid = base_map_uid
-    primary_activity_media_blob: bytes | None = None
+    source_activity_media_blob: bytes | None = None
+    activity_media_candidates: list[str] = []
     thumbnail_candidates: list[str] = []
     variants: list[dict[str, Any]] = []
     source_lap_count = -1
@@ -2344,6 +2345,9 @@ def process_one_campaign(
             uid_overrides=recorded_variant_uids,
         )
         source_thumbnail_jpeg = read_variant_map_metadata(source_file)["thumbnail_jpeg"]
+        source_activity_media_blob = render_activity_media_thumbnail(
+            source_thumbnail_jpeg
+        )
         planned_laps = ", ".join(f"{variant['lap_count']}L" for variant in variants)
         log(
             "Source map settings: "
@@ -2480,9 +2484,6 @@ def process_one_campaign(
             uploaded_map_uids.append(uploaded_map_uid)
             if lap_count == source_lap_count or not primary_uploaded_map_uid:
                 primary_uploaded_map_uid = uploaded_map_uid
-                primary_activity_media_blob = render_activity_media_thumbnail(
-                    read_variant_map_metadata(variant_file)["thumbnail_jpeg"]
-                )
 
             log(
                 f"Map ready: {lap_count}L -> uid={uploaded_map_uid} ({variant_map_name})"
@@ -2507,6 +2508,11 @@ def process_one_campaign(
     append_unique_url(thumbnail_candidates, source_map_info.get("mediaUrlPngSmall"))
     append_unique_url(thumbnail_candidates, source_map_info.get("mediaUrl"))
     append_unique_url(thumbnail_candidates, source_map_info.get("fileUrl"))
+
+    append_unique_url(activity_media_candidates, campaign.get("mediaUrl"))
+    append_unique_url(activity_media_candidates, campaign.get("mediaUrlPngLarge"))
+    append_unique_url(activity_media_candidates, campaign.get("mediaUrlPngMedium"))
+    append_unique_url(activity_media_candidates, campaign.get("mediaUrlPngSmall"))
 
     append_unique_url(thumbnail_candidates, campaign.get("mediaUrl"))
     append_unique_url(thumbnail_candidates, campaign.get("mediaUrlPngLarge"))
@@ -2591,8 +2597,12 @@ def process_one_campaign(
                 f"[DRY-RUN] Create campaign in club {club_id} with {planned_variant_count} map variants"
             )
         if cfg["club"]["upload_activity_media_from_map_thumbnail"]:
-            if primary_activity_media_blob is not None or thumbnail_candidates:
-                log("[DRY-RUN] Upload activity media from map image bytes")
+            if activity_media_candidates:
+                log("[DRY-RUN] Upload activity media from weekly campaign image")
+            elif source_activity_media_blob is not None:
+                log("[DRY-RUN] Upload activity media from clean source thumbnail")
+            elif thumbnail_candidates:
+                log("[DRY-RUN] Upload activity media from map image fallback")
             else:
                 log("[DRY-RUN] Skip activity media upload (no image URL)")
         if cfg["ordering"]["enabled"]:
@@ -2676,16 +2686,33 @@ def process_one_campaign(
 
     media_uploaded = False
     if activity_id > 0 and cfg["club"]["upload_activity_media_from_map_thumbnail"]:
-        if primary_activity_media_blob is not None:
-            log("Upload activity media (local primary variant thumbnail)")
+        if activity_media_candidates:
+            media_blob, media_url_used, last_error = download_first_candidate_bytes(
+                api, activity_media_candidates
+            )
+            if media_blob is None:
+                log(
+                    "Weekly campaign media download failed; "
+                    f"falling back. Last error: {last_error or 'unknown error'}"
+                )
+            else:
+                log(f"Upload activity media (weekly campaign image: {media_url_used})")
+                upload_result = api.upload_activity_media_bytes(
+                    club_id, activity_id, media_blob
+                )
+                media_uploaded = True
+                log(f"Activity media upload result: {upload_result or 'OK'}")
+
+        if not media_uploaded and source_activity_media_blob is not None:
+            log("Upload activity media (clean source thumbnail)")
             upload_result = api.upload_activity_media_bytes(
-                club_id, activity_id, primary_activity_media_blob
+                club_id, activity_id, source_activity_media_blob
             )
             media_uploaded = True
             log(f"Activity media upload result: {upload_result or 'OK'}")
-        elif not thumbnail_candidates:
+        elif not media_uploaded and not thumbnail_candidates:
             log("Activity media upload skipped: no image URL")
-        else:
+        elif not media_uploaded:
             media_blob, media_url_used, last_error = download_first_candidate_bytes(
                 api, thumbnail_candidates
             )
@@ -2694,7 +2721,7 @@ def process_one_campaign(
                     f"Activity media download failed; upload skipped. Last error: {last_error or 'unknown error'}"
                 )
             else:
-                log(f"Upload activity media ({media_url_used})")
+                log(f"Upload activity media (map image fallback: {media_url_used})")
                 upload_result = api.upload_activity_media_bytes(
                     club_id, activity_id, media_blob
                 )

@@ -79,7 +79,13 @@ foreach ($scheduledTime in $scheduledTimes) {
 
 $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $taskArgs
 $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType $LogonType
-$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Hours 72)
+$settings = New-ScheduledTaskSettingsSet `
+    -ExecutionTimeLimit (New-TimeSpan -Hours 72) `
+    -AllowStartIfOnBatteries `
+    -DontStopIfGoingOnBatteries `
+    -StartWhenAvailable `
+    -MultipleInstances IgnoreNew
+ $description = "Runs the Cloneless Grands weekly publish pipeline and retry checks."
 
 Write-Host "Creating/updating task '$TaskName'..."
 Register-ScheduledTask `
@@ -88,6 +94,7 @@ Register-ScheduledTask `
     -Trigger $triggers `
     -Principal $principal `
     -Settings $settings `
+    -Description $description `
     -Force | Out-Null
 
 Write-Host "Task created."
@@ -95,6 +102,9 @@ Write-Host "Task: $TaskName"
 Write-Host "Day:  $Day"
 Write-Host "LogonType: $LogonType"
 Write-Host "Python: $resolvedPythonExe"
+Write-Host "StartWhenAvailable: True"
+Write-Host "AllowStartIfOnBatteries: True"
+Write-Host "StopIfGoingOnBatteries: False"
 Write-Host "Times:"
 foreach ($scheduledTime in $scheduledTimes) {
     Write-Host "  - $scheduledTime"

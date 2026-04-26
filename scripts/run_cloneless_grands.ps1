@@ -110,7 +110,8 @@ function Get-IsoWeekYear {
 }
 
 if (-not $ScheduledMode) {
-    $result = Invoke-PythonScript -Arguments @("--config", $resolvedConfigPath) + $ExtraArgs
+    $runArgs = @("--config", $resolvedConfigPath) + $ExtraArgs
+    $result = Invoke-PythonScript -Arguments $runArgs
     if ($result.ExitCode -ne 0) {
         throw "cloneless_grands.py exited with code $($result.ExitCode)"
     }
@@ -162,7 +163,8 @@ if ($preCompliance.ExitCode -eq 0) {
 }
 
 Write-Host "Latest Weekly Grand is not yet validated. Running publish pipeline..."
-$runResult = Invoke-PythonScript -Arguments @("--config", $resolvedConfigPath) + $ExtraArgs
+$runArgs = @("--config", $resolvedConfigPath) + $ExtraArgs
+$runResult = Invoke-PythonScript -Arguments $runArgs
 if ($runResult.ExitCode -ne 0) {
     Write-Host "Publish run failed. Leaving retries enabled."
     exit $runResult.ExitCode

@@ -159,6 +159,6 @@ Example:
 - State is stored in `work/state.json` to avoid reposting the same `seasonUid`.
 - `work/raw` and `work/processed` keep downloaded and transformed map files.
 - Dotenv loading is configurable via `env.load_dotenv`, `env.dotenv_path`, and `env.override_existing_env`.
-- Activity thumbnail upload is automated: raw map-thumbnail bytes are posted to `.../activity/{activityId}/upload` (not JSON/multipart path mode).
+- Activity thumbnail upload is automated: the campaign card prefers the official Weekly Grand media, falls back to the clean source thumbnail, and only then falls back to map imagery; bytes are posted directly to `.../activity/{activityId}/upload` (not JSON/multipart path mode).
 - Activity ordering can be enforced via `ordering.*` config (default: pin `Information` news at `0`, move processed campaign to `1`).
 - Club background upload is automated: raw bytes are posted to `.../club/{clubId}/media/upload?format=background`, preferring latest Weekly Grands `campaign.mediaUrl`.
