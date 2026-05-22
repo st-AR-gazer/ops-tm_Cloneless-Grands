@@ -33,18 +33,39 @@ function Invoke-PythonScript {
         [switch]$CaptureOutput
     )
 
-    if ($CaptureOutput) {
-        $output = & $PythonExe $scriptPath @Arguments
+    $originalConsoleOutputEncoding = [Console]::OutputEncoding
+    $originalOutputEncoding = $OutputEncoding
+    $originalPythonIoEncoding = $env:PYTHONIOENCODING
+    $utf8Encoding = [System.Text.UTF8Encoding]::new($false)
+
+    try {
+        [Console]::OutputEncoding = $utf8Encoding
+        $OutputEncoding = $utf8Encoding
+        $env:PYTHONIOENCODING = "utf-8:backslashreplace"
+
+        if ($CaptureOutput) {
+            $output = & $PythonExe $scriptPath @Arguments
+            return [pscustomobject]@{
+                ExitCode = $LASTEXITCODE
+                Output   = @($output)
+            }
+        }
+
+        & $PythonExe $scriptPath @Arguments
         return [pscustomobject]@{
             ExitCode = $LASTEXITCODE
-            Output   = @($output)
+            Output   = @()
         }
     }
-
-    & $PythonExe $scriptPath @Arguments
-    return [pscustomobject]@{
-        ExitCode = $LASTEXITCODE
-        Output   = @()
+    finally {
+        [Console]::OutputEncoding = $originalConsoleOutputEncoding
+        $OutputEncoding = $originalOutputEncoding
+        if ($null -eq $originalPythonIoEncoding) {
+            Remove-Item Env:PYTHONIOENCODING -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:PYTHONIOENCODING = $originalPythonIoEncoding
+        }
     }
 }
 

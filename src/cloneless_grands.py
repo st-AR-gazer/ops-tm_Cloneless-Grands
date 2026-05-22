@@ -130,6 +130,20 @@ TM2020_CP004_CHUNK_ID = 0x0305B004
 TM2020_CP00A_CHUNK_ID = 0x0305B00A
 
 
+def configure_stdio() -> None:
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if stream is None:
+            continue
+        reconfigure = getattr(stream, "reconfigure", None)
+        if not callable(reconfigure):
+            continue
+        try:
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+        except ValueError:
+            stream.reconfigure(errors="backslashreplace")
+
+
 def log(msg: str) -> None:
     now = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{now}] {msg}")
@@ -3258,6 +3272,7 @@ def enforce_known_campaign_order(
 
 
 def main() -> int:
+    configure_stdio()
     default_config_path = Path(__file__).resolve().parent.parent / "config.json"
     parser = argparse.ArgumentParser(description="Automate Cloneless Grands workflow.")
     parser.add_argument(
