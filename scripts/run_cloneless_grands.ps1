@@ -131,7 +131,7 @@ function Get-IsoWeekYear {
 }
 
 if (-not $ScheduledMode) {
-    $runArgs = @("--config", $resolvedConfigPath) + $ExtraArgs
+    $runArgs = @("--config", $resolvedConfigPath, "--catch-up") + $ExtraArgs
     $result = Invoke-PythonScript -Arguments $runArgs
     if ($result.ExitCode -ne 0) {
         throw "cloneless_grands.py exited with code $($result.ExitCode)"
@@ -148,7 +148,7 @@ $expectedIsoWeek = [int]$expectedIso.Week
 Write-Host "Scheduled mode enabled."
 Write-Host "Expected release window: ISO year $expectedIsoYear week $expectedIsoWeek"
 
-$latestArgs = @("--config", $resolvedConfigPath, "--length", "1", "--print-latest-weekly")
+$latestArgs = @("--config", $resolvedConfigPath, "--length", "1", "--catch-up", "--print-latest-weekly")
 $latestResult = Invoke-PythonScript -Arguments $latestArgs -CaptureOutput
 if ($latestResult.ExitCode -ne 0) {
     throw "Failed to query latest weekly campaign. Exit code: $($latestResult.ExitCode)"
@@ -168,6 +168,7 @@ $latestJson = $latestJson.Substring($jsonStart)
 $latestWeekly = $latestJson | ConvertFrom-Json
 $latestWeek = [int]$latestWeekly.week
 $latestYear = [int]$latestWeekly.year
+$missingWeeks = @($latestWeekly.catch_up.missing_weeks)
 
 Write-Host "Latest Weekly Grand from API: year=$latestYear week=$latestWeek name=$($latestWeekly.campaign_name)"
 
@@ -177,14 +178,22 @@ if ($latestWeek -ne $expectedIsoWeek -or $latestYear -ne $expectedIsoYear) {
 }
 
 $complianceArgs = @("--config", $resolvedConfigPath, "--check-compliance", "--length", $ValidationLength.ToString())
-$preCompliance = Invoke-PythonScript -Arguments $complianceArgs
-if ($preCompliance.ExitCode -eq 0) {
-    Write-Host "Latest Weekly Grand already validates successfully. Skipping scheduled publish."
-    exit 0
+if ($missingWeeks.Count -eq 0) {
+    $preCompliance = Invoke-PythonScript -Arguments $complianceArgs
+    if ($preCompliance.ExitCode -eq 0) {
+        Write-Host "No missed weeks found, and the latest Weekly Grand validates successfully. Skipping scheduled publish."
+        exit 0
+    }
+}
+else {
+    $missingWeekLabels = $missingWeeks | ForEach-Object {
+        "{0}-W{1:D2}" -f [int]$_.year, [int]$_.week
+    }
+    Write-Host "Missed-week check found: $($missingWeekLabels -join ', ')"
 }
 
-Write-Host "Latest Weekly Grand is not yet validated. Running publish pipeline..."
-$runArgs = @("--config", $resolvedConfigPath) + $ExtraArgs
+Write-Host "Running publish pipeline with missed-week catch-up check..."
+$runArgs = @("--config", $resolvedConfigPath, "--catch-up") + $ExtraArgs
 $runResult = Invoke-PythonScript -Arguments $runArgs
 if ($runResult.ExitCode -ne 0) {
     Write-Host "Publish run failed. Leaving retries enabled."

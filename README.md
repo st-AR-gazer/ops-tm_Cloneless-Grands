@@ -89,6 +89,7 @@ Useful options:
 
 - `--dry-run`: shows what would happen without uploads/edits.
 - `--force`: ignores processed state and re-runs the current source campaign.
+- `--catch-up`: finds missing ISO weeks between the first recorded campaign and the latest Weekly Grand, then fetches enough history to process those gaps.
 - `--offset N`: override Weekly Grands offset.
 - `--length N`: process multiple campaigns from latest backward.
 
@@ -99,6 +100,8 @@ Quick run wrapper:
 ```powershell
 .\scripts\run_cloneless_grands.ps1 -ConfigPath .\config.json
 ```
+
+The runner enables catch-up automatically. If one or more weeks are absent from `work/state.json`, it expands the API fetch window, processes only the missing campaigns (already-recorded weeks are skipped), and then reapplies newest-first club activity ordering.
 
 Compliance check wrapper:
 

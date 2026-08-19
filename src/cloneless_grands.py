@@ -3128,6 +3128,85 @@ def load_state(path: Path) -> dict[str, Any]:
     return payload
 
 
+def iso_week_start(year: int, week: int) -> dt.date | None:
+    try:
+        return dt.date.fromisocalendar(year, week, 1)
+    except ValueError:
+        return None
+
+
+def iso_week_details(date: dt.date) -> dict[str, int]:
+    iso_year, iso_week, _ = date.isocalendar()
+    return {"year": iso_year, "week": iso_week}
+
+
+def build_weekly_catch_up_plan(
+    state: dict[str, Any],
+    latest_campaign: dict[str, Any],
+    *,
+    minimum_length: int = 1,
+) -> dict[str, Any]:
+    """Find unrecorded ISO weeks between the state baseline and the API latest week."""
+    minimum_length = max(1, minimum_length)
+    latest_year = as_int(latest_campaign.get("year"), -1)
+    latest_week = as_int(latest_campaign.get("week"), -1)
+    latest_start = iso_week_start(latest_year, latest_week)
+    if latest_start is None:
+        return {
+            "available": False,
+            "baseline_week": None,
+            "latest_week": {"year": latest_year, "week": latest_week},
+            "missing_weeks": [],
+            "recommended_length": minimum_length,
+            "reason": "Latest Weekly Grand has an invalid ISO year/week.",
+        }
+
+    processed_starts: set[dt.date] = set()
+    processed = state.get("processed", {})
+    if isinstance(processed, dict):
+        for result in processed.values():
+            if not isinstance(result, dict):
+                continue
+            processed_start = iso_week_start(
+                as_int(result.get("year"), -1),
+                as_int(result.get("week"), -1),
+            )
+            if processed_start is not None and processed_start <= latest_start:
+                processed_starts.add(processed_start)
+
+    if not processed_starts:
+        return {
+            "available": True,
+            "baseline_week": None,
+            "latest_week": iso_week_details(latest_start),
+            "missing_weeks": [],
+            "recommended_length": minimum_length,
+            "reason": "No prior processed week is recorded; using the configured window.",
+        }
+
+    baseline_start = min(processed_starts)
+    cursor = baseline_start
+    missing_starts: list[dt.date] = []
+    while cursor <= latest_start:
+        if cursor not in processed_starts:
+            missing_starts.append(cursor)
+        cursor += dt.timedelta(days=7)
+
+    recommended_length = minimum_length
+    if missing_starts:
+        weeks_back_to_oldest_gap = (latest_start - missing_starts[0]).days // 7
+        recommended_length = max(minimum_length, weeks_back_to_oldest_gap + 1)
+
+    return {
+        "available": True,
+        "baseline_week": iso_week_details(baseline_start),
+        "latest_week": iso_week_details(latest_start),
+        "missing_weeks": [iso_week_details(date) for date in missing_starts],
+        "recommended_length": recommended_length,
+        "reason": "",
+    }
+
+
 def collect_recorded_variant_uids(
     state: dict[str, Any], source_map_uid: str
 ) -> dict[int, str]:
@@ -3293,6 +3372,14 @@ def main() -> int:
         help="Ignore processed-state and force processing.",
     )
     parser.add_argument(
+        "--catch-up",
+        action="store_true",
+        help=(
+            "Detect unprocessed ISO weeks since the first recorded campaign and "
+            "expand the Weekly Grands fetch window to include them."
+        ),
+    )
+    parser.add_argument(
         "--check-compliance",
         action="store_true",
         help="Read-only compliance check for generated lap variants and campaign presence.",
@@ -3356,14 +3443,72 @@ def main() -> int:
         print(f"Authentication failed: {exc}", file=sys.stderr)
         return 1
 
-    weekly_length = as_int(cfg["weekly_grands"]["length"], 1)
+    weekly_length = max(1, as_int(cfg["weekly_grands"]["length"], 1))
     weekly_offset = as_int(cfg["weekly_grands"]["offset"], 0)
+    state_path = Path(cfg["paths"]["state_file"])
+    state = load_state(state_path)
+    catch_up_plan: dict[str, Any] | None = None
+    weekly_payload: dict[str, Any] | None = None
 
-    try:
-        weekly_payload = api.get_weekly_grands(weekly_length, weekly_offset)
-    except Exception as exc:
-        print(f"Failed to fetch weekly grands: {exc}", file=sys.stderr)
-        return 1
+    if args.catch_up:
+        try:
+            latest_payload = api.get_weekly_grands(1, weekly_offset)
+        except Exception as exc:
+            print(f"Failed to fetch latest weekly grand: {exc}", file=sys.stderr)
+            return 1
+
+        latest_campaign_list = latest_payload.get("campaignList", [])
+        latest_campaign = (
+            next(
+                (
+                    campaign
+                    for campaign in latest_campaign_list
+                    if isinstance(campaign, dict)
+                ),
+                None,
+            )
+            if isinstance(latest_campaign_list, list)
+            else None
+        )
+        if latest_campaign is None:
+            log("No Weekly Grands campaigns returned.")
+            return 0
+
+        catch_up_plan = build_weekly_catch_up_plan(
+            state,
+            latest_campaign,
+            minimum_length=weekly_length,
+        )
+        weekly_length = as_int(
+            catch_up_plan.get("recommended_length"), weekly_length
+        )
+        missing_weeks = catch_up_plan.get("missing_weeks", [])
+        if missing_weeks:
+            missing_labels = ", ".join(
+                f"{as_int(item.get('year'))}-W{as_int(item.get('week')):02d}"
+                for item in missing_weeks
+                if isinstance(item, dict)
+            )
+            log(
+                f"Catch-up check found {len(missing_weeks)} missing week(s): "
+                f"{missing_labels}. Fetching {weekly_length} Weekly Grands."
+            )
+        else:
+            reason = str(catch_up_plan.get("reason", "")).strip()
+            if reason:
+                log(f"Catch-up check: {reason}")
+            else:
+                log("Catch-up check found no missing weeks.")
+
+        if weekly_length == 1:
+            weekly_payload = latest_payload
+
+    if weekly_payload is None:
+        try:
+            weekly_payload = api.get_weekly_grands(weekly_length, weekly_offset)
+        except Exception as exc:
+            print(f"Failed to fetch weekly grands: {exc}", file=sys.stderr)
+            return 1
 
     campaign_list = weekly_payload.get("campaignList", [])
     if not isinstance(campaign_list, list) or not campaign_list:
@@ -3383,24 +3528,19 @@ def main() -> int:
         source_map_uid = (
             str(first.get("mapUid", "")).strip() if isinstance(first, dict) else ""
         )
-        print(
-            json.dumps(
-                {
-                    "week": as_int(latest_campaign.get("week"), -1),
-                    "year": as_int(latest_campaign.get("year"), -1),
-                    "season_uid": str(
-                        latest_campaign.get("seasonUid", source_map_uid)
-                    ).strip(),
-                    "campaign_name": str(latest_campaign.get("name", "")).strip(),
-                    "source_map_uid": source_map_uid,
-                },
-                indent=2,
-            )
-        )
+        latest_output = {
+            "week": as_int(latest_campaign.get("week"), -1),
+            "year": as_int(latest_campaign.get("year"), -1),
+            "season_uid": str(
+                latest_campaign.get("seasonUid", source_map_uid)
+            ).strip(),
+            "campaign_name": str(latest_campaign.get("name", "")).strip(),
+            "source_map_uid": source_map_uid,
+        }
+        if catch_up_plan is not None:
+            latest_output["catch_up"] = catch_up_plan
+        print(json.dumps(latest_output, indent=2))
         return 0
-
-    state_path = Path(cfg["paths"]["state_file"])
-    state = load_state(state_path)
 
     if args.check_compliance:
         compliance_results: list[dict[str, Any]] = []
